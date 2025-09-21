@@ -6,7 +6,7 @@ import openai
 from deep_translator import GoogleTranslator
 
 # Load API key from Streamlit secrets
-openai.api_key = st.secrets["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"]
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 PROFILE_FILE = "farmer_profile.json"
 LOG_FILE = "activity_logs.json"
