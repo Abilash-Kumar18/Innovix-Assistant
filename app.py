@@ -2,14 +2,14 @@ import streamlit as st
 import json
 import os
 from datetime import datetime
-import openai
+from openai import OpenAI
 from deep_translator import GoogleTranslator
 from streamlit_folium import st_folium
 import folium
 import requests
 
 # ================= CONFIG =================
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 PROFILE_FILE = "farmer_profile.json"
 LOG_FILE = "activity_logs.json"
 
@@ -27,15 +27,16 @@ def save_json(file, data):
 def get_ai_response(query, profile, history):
     translated = GoogleTranslator(source="ml", target="en").translate(query)
     context = f"Farmer Profile: {profile}\nConversation History: {history}\nFarmer asked: {translated}\nAnswer in simple Malayalam."
+    
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful farming assistant for Kerala farmers."},
                 {"role": "user", "content": context}
             ]
         )
-        reply = response.choices[0].message["content"]
+        reply = response.choices[0].message.content
         reply_ml = GoogleTranslator(source="en", target="ml").translate(reply)
         return reply_ml
     except Exception as e:
@@ -83,14 +84,12 @@ st.markdown("""
 if page == "Home":
     st.title("🌾 കൃഷി സഖി – AI കർഷക സഹായി" if is_ml else "🌾 Krishi Sakhi – AI Farmer Assistant")
     st.image("https://cdn-icons-png.flaticon.com/512/2589/2589183.png", width=200)
-
     st.subheader("🌱 Welcome / സ്വാഗതം" if not is_ml else "🌱 സ്വാഗതം")
     st.write("Manage farm activities, get weather, ask questions, receive AI tips." if not is_ml else
              "ഫാർം പ്രവർത്തനങ്ങൾ നിയന്ത്രിക്കുക, കാലാവസ്ഥ അറിയുക, ചോദ്യങ്ങൾ ചോദിക്കുക, AI ഉപദേശങ്ങൾ ലഭിക്കുക.")
-
     st.markdown("---")
-    st.subheader("🖼️ Features / സവിശേഷതകൾ" if is_ml else "🖼️ Features")
 
+    st.subheader("🖼️ Features / സവിശേഷതകൾ" if is_ml else "🖼️ Features")
     static_tips = [
         {"title": "Irrigation" if not is_ml else "സിംചനം",
          "image": "https://cdn-icons-png.flaticon.com/512/2965/2965567.png",
@@ -102,7 +101,6 @@ if page == "Home":
          "image": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
          "desc": "Add organic compost to improve soil fertility." if not is_ml else "മണ്ണിന്റെ സസ്യധാരാവൃദ്ധിക്ക് ജൈവ വളം ചേർക്കുക."},
     ]
-
     for tip in static_tips:
         st.image(tip["image"], width=100)
         st.markdown(f"**{tip['title']}**")
@@ -110,24 +108,21 @@ if page == "Home":
 
     st.markdown("---")
     st.subheader("🤖 AI Tips" if not is_ml else "🤖 AI ഉപദേശം")
-
     recent_activities = logs[-3:] if logs else []
     activities_text = "\n".join([f"- {act['activity']} on {act['time']}" for act in recent_activities]) if recent_activities else "No recent activities"
-
     ai_context = f"Farmer Profile: {profile}\nRecent Activities:\n{activities_text}\nProvide 2-3 simple tips in {'Malayalam' if is_ml else 'English'}."
-
+    
     if st.button("Get AI Tips" if not is_ml else "AI ഉപദേശം ലഭിക്കുക", key="ai_tip_button", help="Click to get AI farming tips", use_container_width=True):
         try:
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are an expert farming assistant providing concise tips."},
                     {"role": "user", "content": ai_context}
                 ]
             )
-            ai_tips_raw = response.choices[0].message["content"]
+            ai_tips_raw = response.choices[0].message.content
             ai_tips = [tip.strip("- ").strip() for tip in ai_tips_raw.split("\n") if tip.strip()]
-
             icon_map = {
                 "water": "https://cdn-icons-png.flaticon.com/512/2965/2965567.png",
                 "irrigation": "https://cdn-icons-png.flaticon.com/512/2965/2965567.png",
@@ -135,7 +130,6 @@ if page == "Home":
                 "soil": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
                 "fertilizer": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
             }
-
             for tip in ai_tips:
                 matched_icon = next((icon_map[key] for key in icon_map if key in tip.lower()), None)
                 cols_tip = st.columns([1, 5])
@@ -147,7 +141,7 @@ if page == "Home":
         except Exception as e:
             st.error(f"⚠️ Error generating tips: {e}")
 
-# ================= FARMER PROFILE PAGE =================
+# ================= FARMER PROFILE =================
 elif page == "Farmer Profile":
     st.header("👨‍🌾 Farmer Profile" if not is_ml else "👨‍🌾 കർഷക പ്രൊഫൈൽ")
     with st.form("profile_form"):
@@ -156,13 +150,11 @@ elif page == "Farmer Profile":
         crop = st.text_input("Main Crop", profile.get("crop", ""))
         soil = st.text_input("Soil Type", profile.get("soil", ""))
         land = st.text_input("Land Size (acres)", profile.get("land", ""))
-
         submitted = st.form_submit_button("Save Profile")
         if submitted:
             profile = {"name": name, "location": location, "crop": crop, "soil": soil, "land": land}
             save_json(PROFILE_FILE, profile)
             st.success("✅ Profile saved!")
-
     if profile:
         st.json(profile)
 
@@ -171,7 +163,6 @@ elif page == "Chat Assistant":
     st.header("💬 Ask a Question" if not is_ml else "💬 ചോദ്യങ്ങൾ ചോദിക്കുക")
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
-
     user_query = st.text_input("Type your question in Malayalam:" if is_ml else "Type your question:")
     if st.button("Get Answer" if not is_ml else "ഉത്തരമെടുക്കുക"):
         if not profile:
@@ -179,7 +170,6 @@ elif page == "Chat Assistant":
         elif user_query.strip() != "":
             answer = get_ai_response(user_query, profile, st.session_state.chat_history)
             st.session_state.chat_history.append({"q": user_query, "a": answer})
-
     for chat in reversed(st.session_state.chat_history):
         st.write(f"👨‍🌾: {chat['q']}")
         st.write(f"🤖: {chat['a']}")
@@ -193,7 +183,6 @@ elif page == "Activity Log":
         logs.append(entry)
         save_json(LOG_FILE, logs)
         st.success("✅ Activity logged!")
-
     if logs:
         st.subheader("Past Activities" if not is_ml else "മുൻ പ്രവർത്തനങ്ങൾ")
         for log in reversed(logs[-5:]):
@@ -203,8 +192,7 @@ elif page == "Activity Log":
 elif page == "Weather & Map":
     st.header("🌤️ Weather & Map" if not is_ml else "🌤️ കാലാവസ്ഥ & മാപ്പ്")
     st.write("Allow location to see weather and map." if not is_ml else "കാലാവസ്ഥയും മാപ്പും കാണാൻ സ്ഥലം അനുവദിക്കുക.")
-
-    location = st.text_input("Enter your location coordinates as lat,lon (e.g., 10.85,76.27):" if not is_ml else "സ്ഥലം ലാറ്റ്,ലോൺ നൽകുക (e.g., 10.85,76.27):")
+    location = st.text_input("Enter your location coordinates as lat,lon (e.g., 10.85,76.27):" if is_ml else "സ്ഥലം ലാറ്റ്,ലോൺ നൽകുക (e.g., 10.85,76.27):")
     if location:
         try:
             lat, lon = map(float, location.split(","))
