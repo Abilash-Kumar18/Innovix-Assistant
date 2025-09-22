@@ -1,136 +1,143 @@
 import streamlit as st
-import requests
-import folium
-from streamlit_folium import st_folium
-import geocoder
+import json
+import os
+from datetime import datetime
 from deep_translator import GoogleTranslator
-import openai
+import requests
+import geocoder
+from streamlit_folium import st_folium
+import folium
+from openai import OpenAI
+from openai.error import RateLimitError
 
-# -------------------------
-# SETUP
-# -------------------------
-st.set_page_config(page_title="Krishi Sakhi - AI Farming Assistant", layout="wide")
+# ================= CONFIG =================
+st.set_page_config(page_title="Krishi Sakhi - AI Farmer Assistant", layout="wide")
 
-# Load API key from Streamlit secrets
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+PROFILE_FILE = "farmer_profile.json"
+LOG_FILE = "activity_logs.json"
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+OPENWEATHER_API_KEY = st.secrets["OPENWEATHER_API_KEY"]
 
-# -------------------------
-# TRANSLATION FUNCTION
-# -------------------------
-def translate_text(text, target_lang="ml"):
+# ================= HELPER FUNCTIONS =================
+def load_json(file, default):
+    if os.path.exists(file):
+        with open(file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return default
+
+def save_json(file, data):
+    with open(file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def get_ai_response(query, profile, history):
+    translated = GoogleTranslator(source="ml", target="en").translate(query)
+    context = f"Farmer Profile: {profile}\nConversation History: {history}\nFarmer asked: {translated}\nAnswer in simple Malayalam."
     try:
-        return GoogleTranslator(source="auto", target=target_lang).translate(text)
-    except:
-        return text
-
-# -------------------------
-# WEATHER FUNCTION
-# -------------------------
-def get_weather(city):
-    api_key = st.secrets.get("OPENWEATHER_API_KEY")
-    if not api_key:
-        return {"error": "Missing OpenWeather API key in secrets."}
-
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
-    response = requests.get(url).json()
-    if response.get("cod") != 200:
-        return {"error": response.get("message", "Unable to fetch weather.")}
-    
-    return {
-        "city": response["name"],
-        "temperature": response["main"]["temp"],
-        "description": response["weather"][0]["description"]
-    }
-
-# -------------------------
-# AI FARMING ADVISOR
-# -------------------------
-def ai_advice(query):
-    try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are Krishi Sakhi, an AI farming assistant."},
-                {"role": "user", "content": query}
-            ],
-            max_tokens=200
+                {"role": "system", "content": "You are a helpful farming assistant for Kerala farmers."},
+                {"role": "user", "content": context}
+            ]
         )
-        return response["choices"][0]["message"]["content"]
+        reply = response.choices[0].message.content
+        reply_ml = GoogleTranslator(source="en", target="ml").translate(reply)
+        return reply_ml
+    except RateLimitError:
+        return "⚠️ API quota exceeded. Please try again later."
     except Exception as e:
         return f"⚠️ Error: {e}"
 
-# -------------------------
-# SIDEBAR
-# -------------------------
-st.sidebar.title("🌱 Krishi Sakhi Assistant")
-page = st.sidebar.radio("Navigate", ["🏠 Home", "☁️ Weather", "🗺️ Map", "🤖 Chat Assistant", "📒 Activity Log"])
+def get_weather(lat, lon):
+    try:
+        url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units=metric"
+        data = requests.get(url).json()
+        desc = data["weather"][0]["description"]
+        temp = data["main"]["temp"]
+        return f"{desc}, {temp}°C"
+    except Exception:
+        return "Weather data unavailable"
 
-language = st.sidebar.selectbox("🌍 Select Language", ["English", "മലയാളം"])
+# ================= MAIN APP =================
+st.title("🌾 Krishi Sakhi – AI-Powered Farming Assistant")
 
-# -------------------------
-# HOME PAGE
-# -------------------------
-if page == "🏠 Home":
-    st.title("🌾 Krishi Sakhi - AI Farming Assistant")
-    st.image("https://img.freepik.com/premium-photo/smart-indian-farmer-using-laptop-field_75648-598.jpg", use_column_width=True)
-    st.markdown("""
-    Welcome to **Krishi Sakhi**, your AI-powered assistant for smart farming.
-    
-    ✅ Get real-time weather updates  
-    ✅ Interactive farm location maps  
-    ✅ Chat with AI for farming advice  
-    ✅ Maintain an activity log  
-    """)
-    if language == "മലയാളം":
-        st.markdown(translate_text("Welcome to Krishi Sakhi. Your AI-powered assistant for smart farming.", "ml"))
+# Load saved data
+profile = load_json(PROFILE_FILE, {})
+logs = load_json(LOG_FILE, [])
 
-# -------------------------
-# WEATHER PAGE
-# -------------------------
-elif page == "☁️ Weather":
-    st.title("☁️ Weather Forecast")
-    city = st.text_input("Enter your city", "Kochi")
-    if st.button("Get Weather"):
-        weather = get_weather(city)
-        if "error" in weather:
-            st.error(weather["error"])
-        else:
-            st.success(f"🌡️ {weather['temperature']}°C, {weather['description'].capitalize()} in {weather['city']}")
+# ---------------- Home Page ----------------
+st.header("🏠 Home")
+st.image("https://i.imgur.com/4NJqg2N.png", use_column_width=True)  # AI Farmer image placeholder
 
-# -------------------------
-# MAP PAGE
-# -------------------------
-elif page == "🗺️ Map":
-    st.title("🗺️ Farm Location Map")
-    g = geocoder.ip("me")
-    lat, lon = g.latlng if g.ok else (10.0, 76.0)  # Default Kerala
-    
-    m = folium.Map(location=[lat, lon], zoom_start=10)
-    folium.Marker([lat, lon], tooltip="Your Location").add_to(m)
-    st_folium(m, width=700, height=500)
+st.subheader("📍 Your Location & Weather")
+user_location = geocoder.ip('me')
+lat, lon = user_location.latlng if user_location.ok else (10.0, 76.0)  # Default Kerala coords
+st.map([[lat, lon]])
+st.write(f"Current weather: {get_weather(lat, lon)}")
 
-# -------------------------
-# CHAT ASSISTANT
-# -------------------------
-elif page == "🤖 Chat Assistant":
-    st.title("🤖 AI Farming Assistant")
-    user_input = st.text_area("Ask your farming question:")
-    if st.button("Get Advice"):
-        response = ai_advice(user_input)
-        if language == "മലയാളം":
-            response = translate_text(response, "ml")
-        st.write(response)
+# ---------------- Farmer Profile ----------------
+st.header("👨‍🌾 Farmer Profile")
+with st.form("profile_form"):
+    name = st.text_input("Name", profile.get("name", ""))
+    location = st.text_input("Location", profile.get("location", ""))
+    crop = st.text_input("Main Crop", profile.get("crop", ""))
+    soil = st.text_input("Soil Type", profile.get("soil", ""))
+    land = st.text_input("Land Size (acres)", profile.get("land", ""))
 
-# -------------------------
-# ACTIVITY LOG
-# -------------------------
-elif page == "📒 Activity Log":
-    st.title("📒 Farmer's Activity Log")
-    activity = st.text_input("Log your farming activity:")
-    if "log" not in st.session_state:
-        st.session_state["log"] = []
-    if st.button("Save Activity"):
-        st.session_state["log"].append(activity)
-        st.success("Activity saved!")
-    st.write("### Your Past Activities")
-    st.write(st.session_state["log"])
+    submitted = st.form_submit_button("Save Profile")
+    if submitted:
+        profile = {"name": name, "location": location, "crop": crop, "soil": soil, "land": land}
+        save_json(PROFILE_FILE, profile)
+        st.success("✅ Profile saved!")
+
+if profile:
+    st.json(profile)
+
+# ---------------- Chat Assistant ----------------
+st.header("💬 Ask a Question (Malayalam)")
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+user_query = st.text_input("Type your question in Malayalam:")
+if st.button("Get Answer"):
+    if not profile:
+        st.warning("⚠️ Please fill in your profile first.")
+    elif user_query.strip() != "":
+        answer = get_ai_response(user_query, profile, st.session_state.chat_history)
+        st.session_state.chat_history.append({"q": user_query, "a": answer})
+
+for chat in reversed(st.session_state.chat_history):
+    st.write(f"👨‍🌾: {chat['q']}")
+    st.write(f"🤖: {chat['a']}")
+
+# ---------------- Activity Log ----------------
+st.header("📝 Activity Log")
+activity = st.text_input("Log activity (e.g., sowing, irrigation, spraying):")
+if st.button("Add Log"):
+    entry = {"activity": activity, "time": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    logs.append(entry)
+    save_json(LOG_FILE, logs)
+    st.success("✅ Activity logged!")
+
+if logs:
+    st.subheader("Past Activities")
+    for log in reversed(logs[-5:]):
+        st.write(f"{log['time']} - {log['activity']}")
+
+# ---------------- Advisory ----------------
+st.header("📢 Advisory")
+if logs:
+    last_activity = logs[-1]["activity"].lower()
+    if "irrigation" in last_activity:
+        st.info("🌧️ Rain expected tomorrow – avoid irrigation.")
+    elif "pest" in last_activity or "spray" in last_activity:
+        st.info("🐛 Inspect your crop – pest alert nearby. Consider neem-based solution.")
+    else:
+        st.info("✅ Keep monitoring your crop regularly.")
+else:
+    st.write("No activities logged yet.")
+
+# ---------------- Interactive Map ----------------
+st.header("🗺️ Farm Map")
+m = folium.Map(location=[lat, lon], zoom_start=12)
+st_folium(m, width=700, height=400)
