@@ -1,6 +1,7 @@
 streamlit
 openai
 deep-translator
-streamlit-folium
-folium
 requests
+folium
+streamlit-folium
+geocoder
