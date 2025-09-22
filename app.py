@@ -6,16 +6,13 @@ import openai
 from deep_translator import GoogleTranslator
 from streamlit_folium import st_folium
 import folium
-import requests
 
-# ========== CONFIG ==========
+# ================= CONFIG =================
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-weather_api_key = st.secrets["OPENWEATHER_API_KEY"]
-
 PROFILE_FILE = "farmer_profile.json"
 LOG_FILE = "activity_logs.json"
 
-# ========== HELPER FUNCTIONS ==========
+# ================= HELPER FUNCTIONS =================
 def load_json(file, default):
     if os.path.exists(file):
         with open(file, "r", encoding="utf-8") as f:
@@ -26,77 +23,114 @@ def save_json(file, data):
     with open(file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def get_weather(lat, lon, lang="en"):
-    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={weather_api_key}&units=metric&lang={lang}"
+def get_ai_response(query, profile, history):
+    translated = GoogleTranslator(source="ml", target="en").translate(query)
+    context = f"Farmer Profile: {profile}\nConversation History: {history}\nFarmer asked: {translated}\nAnswer in simple Malayalam."
     try:
-        res = requests.get(url).json()
-        if "main" in res:
-            temp = res["main"]["temp"]
-            desc = res["weather"][0]["description"]
-            humidity = res["main"]["humidity"]
-            return f"🌡️ {temp}°C | {desc.capitalize()} | 💧 Humidity: {humidity}%"
-        else:
-            return "⚠️ Weather data unavailable"
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful farming assistant for Kerala farmers."},
+                {"role": "user", "content": context}
+            ]
+        )
+        reply = response.choices[0].message["content"]
+        reply_ml = GoogleTranslator(source="en", target="ml").translate(reply)
+        return reply_ml
     except Exception as e:
-        return f"⚠️ Error fetching weather: {e}"
+        return f"⚠️ Error: {e}"
 
-# ========== STREAMLIT APP ==========
-st.set_page_config(page_title="Krishi Sakhi - Farming Assistant", layout="wide")
+# ================= APP LAYOUT =================
+st.set_page_config(page_title="Krishi Sakhi", layout="wide")
 
-# Language Toggle
-lang = st.sidebar.radio("🌐 Language / ഭാഷ", ("English", "മലയാളം"))
+lang_options = ["English", "മലയാളം"]
+lang = st.sidebar.selectbox("Choose Language / ഭാഷ തിരഞ്ഞെടുക്കുക", lang_options)
 is_ml = lang == "മലയാളം"
-weather_lang = "ml" if is_ml else "en"
 
-# ---- Title ----
-st.title("🌾 കൃഷി സഖി – കർഷകരുടെ AI സഹായം" if is_ml else "🌾 Krishi Sakhi – AI-Powered Farming Assistant")
+pages = ["Home", "Farmer Profile", "Chat Assistant", "Activity Log", "Weather & Map"]
+page = st.sidebar.radio("Navigation", pages)
 
-# Load saved data
 profile = load_json(PROFILE_FILE, {})
 logs = load_json(LOG_FILE, [])
 
-# ---- Farmer Profile ----
-st.header("👨‍🌾 കർഷകന്റെ വിവരങ്ങൾ" if is_ml else "👨‍🌾 Farmer Profile")
-with st.form("profile_form"):
-    name = st.text_input("പേര്" if is_ml else "Name", profile.get("name", ""))
-    crop = st.selectbox("പ്രധാന വിള" if is_ml else "Main Crop", ["Rice", "Coconut", "Banana", "Vegetables", "Rubber", "Other"])
-    soil = st.selectbox("മണ്ണിന്റെ തരം" if is_ml else "Soil Type", ["Sandy", "Clay", "Loamy", "Laterite", "Alluvial"])
-    land = st.text_input("ഭൂമിയുടെ വലുപ്പം (ഏക്കർ)" if is_ml else "Land Size (acres)", profile.get("land", ""))
+# ================= MOBILE-FRIENDLY STYLING =================
+st.markdown("""
+<style>
+.big-button > button {
+    padding: 15px 25px;
+    font-size: 20px;
+}
+.big-input input {
+    height: 50px;
+    font-size: 18px;
+}
+</style>
+""", unsafe_allow_html=True)
 
-    submitted = st.form_submit_button("സേവ് ചെയ്യുക" if is_ml else "Save Profile")
-    if submitted:
-        profile = {"name": name, "crop": crop, "soil": soil, "land": land}
-        save_json(PROFILE_FILE, profile)
-        st.success("✅ സംരക്ഷിച്ചു!" if is_ml else "✅ Profile saved!")
+# ================= HOME PAGE =================
+if page == "Home":
+    st.title("🌾 കൃഷി സഖി – AI കർഷക സഹായി" if is_ml else "🌾 Krishi Sakhi – AI Farmer Assistant")
+    st.image("https://cdn-icons-png.flaticon.com/512/2589/2589183.png", width=200)
 
-if profile:
-    st.subheader("📌 വിശദാംശങ്ങൾ" if is_ml else "📌 Farmer Details")
-    st.json(profile)
+    st.subheader("🌱 Welcome / സ്വാഗതം" if not is_ml else "🌱 സ്വാഗതം")
+    st.write("Manage farm activities, get weather, ask questions, receive AI tips." if not is_ml else
+             "ഫാർം പ്രവർത്തനങ്ങൾ നിയന്ത്രിക്കുക, കാലാവസ്ഥ അറിയുക, ചോദ്യങ്ങൾ ചോദിക്കുക, AI ഉപദേശങ്ങൾ ലഭിക്കുക.")
 
-# ---- Location Map ----
-st.header("📍 സ്ഥലം / Location")
-st.write("🗺️ നിങ്ങളുടെ സ്ഥലത്ത് ക്ലിക്ക് ചെയ്യുക" if is_ml else "🗺️ Click on the map to mark your farm location")
+    st.markdown("---")
+    st.subheader("🖼️ Features / സവിശേഷതകൾ" if is_ml else "🖼️ Features")
 
-m = folium.Map(location=[10.85, 76.27], zoom_start=7)  # Kerala default center
-if "location" in profile and "lat" in profile["location"]:
-    folium.Marker(
-        [profile["location"]["lat"], profile["location"]["lon"]],
-        popup="Your Farm",
-        icon=folium.Icon(color="green")
-    ).add_to(m)
+    static_tips = [
+        {"title": "Irrigation" if not is_ml else "സിംചനം",
+         "image": "https://cdn-icons-png.flaticon.com/512/2965/2965567.png",
+         "desc": "Water crops early morning or late evening." if not is_ml else "രാവിലെ അല്ലെങ്കിൽ വൈകിട്ട് വിളകൾ വെള്ളം നൽകുക."},
+        {"title": "Pest Control" if not is_ml else "പൊട്ടെൻ നിയന്ത്രണം",
+         "image": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
+         "desc": "Use neem-based pesticides for safe control." if not is_ml else "സുരക്ഷിതമായി പൊട്ടെൻ നിയന്ത്രിക്കാൻ നീം പദാർത്ഥ പടികാരികൾ ഉപയോഗിക്കുക."},
+        {"title": "Soil Health" if not is_ml else "മണ്ണിന്റെ ആരോഗ്യസംരക്ഷണം",
+         "image": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
+         "desc": "Add organic compost to improve soil fertility." if not is_ml else "മണ്ണിന്റെ സസ്യധാരാവൃദ്ധിക്ക് ജൈവ വളം ചേർക്കുക."},
+    ]
 
-map_data = st_folium(m, height=400, width=700)
+    for tip in static_tips:
+        st.image(tip["image"], width=100)  # 📱 Mobile-friendly smaller images
+        st.markdown(f"**{tip['title']}**")
+        st.write(tip["desc"])
 
-if map_data and map_data["last_clicked"]:
-    lat, lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
-    profile["location"] = {"lat": lat, "lon": lon}
-    save_json(PROFILE_FILE, profile)
-    st.success(f"📍 Location saved: {lat:.4f}, {lon:.4f}")
+    st.markdown("---")
+    st.subheader("🤖 AI Tips" if not is_ml else "🤖 AI ഉപദേശം")
 
-if "location" in profile:
-    st.map([{"lat": profile["location"]["lat"], "lon": profile["location"]["lon"]}])
+    recent_activities = logs[-3:] if logs else []
+    activities_text = "\n".join([f"- {act['activity']} on {act['time']}" for act in recent_activities]) if recent_activities else "No recent activities"
 
-    # ---- Weather Section ----
-    st.header("🌦️ കാലാവസ്ഥ" if is_ml else "🌦️ Weather Update")
-    weather_report = get_weather(profile["location"]["lat"], profile["location"]["lon"], lang=weather_lang)
-    st.info(weather_report)
+    ai_context = f"Farmer Profile: {profile}\nRecent Activities:\n{activities_text}\nProvide 2-3 simple tips in {'Malayalam' if is_ml else 'English'}."
+
+    if st.button("Get AI Tips" if not is_ml else "AI ഉപദേശം ലഭിക്കുക", key="ai_tip_button", help="Click to get AI farming tips", use_container_width=True):
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are an expert farming assistant providing concise tips."},
+                    {"role": "user", "content": ai_context}
+                ]
+            )
+            ai_tips_raw = response.choices[0].message["content"]
+            ai_tips = [tip.strip("- ").strip() for tip in ai_tips_raw.split("\n") if tip.strip()]
+
+            icon_map = {
+                "water": "https://cdn-icons-png.flaticon.com/512/2965/2965567.png",
+                "irrigation": "https://cdn-icons-png.flaticon.com/512/2965/2965567.png",
+                "pest": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
+                "soil": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
+                "fertilizer": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
+            }
+
+            for tip in ai_tips:
+                matched_icon = next((icon_map[key] for key in icon_map if key in tip.lower()), None)
+                cols_tip = st.columns([1, 5])
+                with cols_tip[0]:
+                    if matched_icon:
+                        st.image(matched_icon, width=50)
+                with cols_tip[1]:
+                    st.write(tip)
+        except Exception as e:
+            st.error(f"⚠️ Error generating tips: {e}")
